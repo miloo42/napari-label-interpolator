@@ -22,6 +22,14 @@ def interpolate_sdf(labels_data, background=0, axis=0):
     """
     Interpolate labels along a given using weighted SDFs
     """
+    # Drop leading singleton dims added by OME-Zarr (e.g. T, C channels)
+    original_shape = labels_data.shape
+    singleton_axes = tuple(i for i, s in enumerate(original_shape) if s == 1)
+    if singleton_axes:
+        labels_data = np.squeeze(labels_data, axis=singleton_axes)
+        axis = axis - sum(1 for s in singleton_axes if s < axis)
+        axis = max(0, axis)
+
     # compute euclidean distance transform for each z_slice and each label
     dists = defaultdict(dict)
     data_reordered = np.moveaxis(labels_data, axis, 0)
@@ -73,7 +81,13 @@ def interpolate_sdf(labels_data, background=0, axis=0):
 
             result[z_idx][weighted_average > 0] = label
 
-    return np.moveaxis(result, 0, axis)
+    result = np.moveaxis(result, 0, axis)
+
+    # Restore singleton dimensions that were squeezed out
+    for ax in singleton_axes:
+        result = np.expand_dims(result, ax)
+
+    return result
 
 
 @magic_factory
@@ -86,7 +100,10 @@ def interpolate(
     try:
         bg = labels._background_label  # napari <= 0.4.18
     except AttributeError:
-        bg = labels.colormap.background_value
+        try:
+            bg = labels.colormap.background_value  # napari 0.4.19–0.4.x
+        except AttributeError:
+            bg = 0  # napari >= 0.5: background is always 0
 
     return (
         interpolate_sdf(compute(labels.data)[0], background=bg, axis=axis),
